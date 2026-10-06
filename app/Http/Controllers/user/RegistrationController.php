@@ -190,6 +190,7 @@ class RegistrationController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'Error occurred while saving personal info',
+                'error' => $e->getMessage()
             ], 500);
         }
     }
