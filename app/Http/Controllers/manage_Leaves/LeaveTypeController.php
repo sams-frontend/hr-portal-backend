@@ -188,7 +188,7 @@ class LeaveTypeController extends Controller
                 'name'              => 'required|string|max:255',
                 'type'              => 'required|string|max:255',
                 'code'              => 'nullable|string|max:50',
-                'max_allowed_days'  => 'required|integer|min:0',
+                'max_allowed_days'  => 'required|integer|min:0|max:999',
                 'is_paid' => 'required|boolean',
             ]);
 
@@ -253,7 +253,7 @@ class LeaveTypeController extends Controller
                 'name'              => 'sometimes|required|string|max:255',
                 'type'              => 'sometimes|required|string|max:255',
                 'code'              => 'nullable|string|max:50',
-                'max_allowed_days'  => 'sometimes|required|integer|min:0',
+                'max_allowed_days'  => 'sometimes|required|integer|min:0|max:999',
                 'is_paid' => 'sometimes|required|boolean',
             ]);
 
