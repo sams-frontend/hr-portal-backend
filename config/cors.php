@@ -30,7 +30,7 @@ return [
     'allowed_origins' => [
         'http://localhost:5173',
         'http://127.0.0.1:5173',
-        'http://13.206.25.51',
+        'http://3.108.226.210',
         'https://petstore.swagger.io'
     ],
 
