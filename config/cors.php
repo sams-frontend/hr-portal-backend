@@ -30,8 +30,8 @@ return [
     'allowed_origins' => [
         'http://localhost:5173',
         'http://127.0.0.1:5173',
-        'api-hrms.samsdigital.in',
-        'https://petstore.swagger.io'
+        'https://api-hrms.samsdigital.in',
+        // 'https://petstore.swagger.io'
     ],
 
     'allowed_origins_patterns' => [],
