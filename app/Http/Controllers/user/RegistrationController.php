@@ -479,27 +479,145 @@ class RegistrationController extends Controller
         }
     }
 
+    /**
+     * Bulk Import Employees (Excel)
+     *
+     * Creates employees in bulk from an Excel/CSV file. The first sheet is read and row 1 must be the header row.
+     *
+     * Every row is validated and saved independently: **valid rows are imported, invalid rows are skipped**,
+     * and the response lists each skipped row with its spreadsheet row number and the reason(s).
+     * Imported employees get the Employee role (role_id 3), a current + permanent address and the
+     * default leave balances for the current year.
+     *
+     * **Required columns:** first_name, last_name, gender (Male/Female/Other), personal_email, phone_no (10-15 digits),
+     * date_of_birth (YYYY-MM-DD; DD-MM-YYYY and DD/MM/YYYY also accepted), current_address1, current_city,
+     * current_state, current_pincode, current_country.
+     *
+     * **Optional columns:** salutation, middle_name, marital_status, blood_grp, specially_abled, alt_phone_no,
+     * office_id, office_email, department_id, designation_id, employee_type_id, reporting_manager_id,
+     * date_of_joining (YYYY-MM-DD, probation end = joining + 3 months), work_mode (remote/onsite/hybrid, default onsite),
+     * current_location, about, current_address2, same_as_current (yes/no), permanent_address1, permanent_address2,
+     * permanent_city, permanent_state, permanent_pincode, permanent_country.
+     * The permanent_* columns (except permanent_address2) are required unless same_as_current is "yes".
+     *
+     * personal_email, phone_no, alt_phone_no, office_id and office_email must be unique across existing
+     * employees and the other rows in the file. Max 1000 rows per file.
+     *
+     * Status codes: `200` when at least one row was imported (check `summary.failed` for skipped rows),
+     * `422` when no row could be imported, the file is missing required columns, has no data or too many rows.
+     *
+     * @group User Management
+     * @authenticated
+     *
+     * @bodyParam file file required The .xlsx, .xls or .csv file (max 5 MB).
+     *
+     * @response 200 scenario="Some rows imported, some skipped" {
+     *  "status": true,
+     *  "message": "2 of 3 employees imported. 1 row failed.",
+     *  "summary": {"total_rows": 3, "imported": 2, "failed": 1},
+     *  "imported": [
+     *    {"row": 2, "id": 21, "uuid": "9b1c3f0e-4c1d-4e7a-9d55-0b6f6a1f2c11", "name": "Rahul Sharma", "personal_email": "rahul@example.com"},
+     *    {"row": 4, "id": 22, "uuid": "1f0d9e2a-7a8b-4d3c-8e1f-2a3b4c5d6e7f", "name": "Priya Iyer", "personal_email": "priya@example.com"}
+     *  ],
+     *  "failed": [
+     *    {"row": 3, "name": "Amit Verma", "errors": {
+     *      "personal_email": ["This personal email is already used by another employee (or by an earlier row in this file)."],
+     *      "date_of_birth": ["The date of birth must be a valid date in YYYY-MM-DD format (DD-MM-YYYY and DD/MM/YYYY are also accepted)."]
+     *    }}
+     *  ]
+     * }
+     * @response 200 scenario="All rows imported" {
+     *  "status": true,
+     *  "message": "All 2 employees imported successfully.",
+     *  "summary": {"total_rows": 2, "imported": 2, "failed": 0},
+     *  "imported": [{"row": 2, "id": 21, "uuid": "9b1c3f0e-4c1d-4e7a-9d55-0b6f6a1f2c11", "name": "Rahul Sharma", "personal_email": "rahul@example.com"}],
+     *  "failed": []
+     * }
+     * @response 422 scenario="No row could be imported" {
+     *  "status": false,
+     *  "message": "No employees were imported. 1 row failed.",
+     *  "summary": {"total_rows": 1, "imported": 0, "failed": 1},
+     *  "imported": [],
+     *  "failed": [{"row": 2, "name": null, "errors": {"first_name": ["The first name field is required."]}}]
+     * }
+     * @response 422 scenario="Missing required columns" {
+     *  "status": false,
+     *  "message": "The file is missing required columns: phone_no, current_city",
+     *  "missing_columns": ["phone_no", "current_city"]
+     * }
+     * @response 422 scenario="Empty file" {
+     *  "status": false,
+     *  "message": "The file does not contain any employee rows."
+     * }
+     * @response 422 scenario="Invalid file type" {
+     *  "message": "The file field must be a file of type: xlsx, csv, xls.",
+     *  "errors": {"file": ["The file field must be a file of type: xlsx, csv, xls."]}
+     * }
+     * @response 500 scenario="Unreadable file" {
+     *  "status": false,
+     *  "message": "Could not read the uploaded file. Please make sure it is a valid Excel/CSV file."
+     * }
+     */
     public function importExcel(Request $request)
     {
-        Log::info('Import Excel Request Data:');
-        Log::info('Import Excel Request Data:', $request->all());
-
         $request->validate([
-            'file' => 'required|mimes:xlsx,csv,xls'
+            'file' => 'required|file|mimes:xlsx,csv,xls|max:5120',
         ]);
+
+        $file = $request->file('file');
+        $import = new UsersImport();
+
         try {
-            Excel::import(new UsersImport, $request->file('file'));
-            return response()->json(['message' => 'Data imported successfully!']);
-        } catch (\Exception $e) {
-            Log::error('Excel Import Failed', [
-                'message' => $e->getMessage(),
-                'line'    => $e->getLine(),
-            ]);
+            $missing = $import->missingColumns($file);
+            $rows = $missing ? collect() : $import->rows($file);
+        } catch (\Throwable $e) {
+            Log::error('Excel import: could not read file', ['message' => $e->getMessage()]);
+
             return response()->json([
-                'error' => 'Failed to import data.',
-                'details' => $e->getMessage()
+                'status' => false,
+                'message' => 'Could not read the uploaded file. Please make sure it is a valid Excel/CSV file.',
             ], 500);
         }
+
+        if ($missing) {
+            return response()->json([
+                'status' => false,
+                'message' => 'The file is missing required columns: ' . implode(', ', $missing),
+                'missing_columns' => $missing,
+            ], 422);
+        }
+        if ($rows->isEmpty()) {
+            return response()->json(['status' => false, 'message' => 'The file does not contain any employee rows.'], 422);
+        }
+        if ($rows->count() > UsersImport::MAX_ROWS) {
+            return response()->json([
+                'status' => false,
+                'message' => 'The file has ' . $rows->count() . ' rows. A maximum of ' . UsersImport::MAX_ROWS . ' rows can be imported at once.',
+            ], 422);
+        }
+
+        ['imported' => $imported, 'failed' => $failed] = $import->process($rows);
+
+        $total = $rows->count();
+        $importedCount = count($imported);
+        $failedCount = count($failed);
+        $rowWord = $failedCount === 1 ? 'row' : 'rows';
+
+        $message = match (true) {
+            $failedCount === 0 => "All {$importedCount} employees imported successfully.",
+            $importedCount === 0 => "No employees were imported. {$failedCount} {$rowWord} failed.",
+            default => "{$importedCount} of {$total} employees imported. {$failedCount} {$rowWord} failed.",
+        };
+
+        Log::info('Excel import finished', ['by' => auth()->id(), 'total' => $total, 'imported' => $importedCount, 'failed' => $failedCount]);
+
+        return response()->json([
+            'status' => $importedCount > 0,
+            'message' => $message,
+            'summary' => ['total_rows' => $total, 'imported' => $importedCount, 'failed' => $failedCount],
+            'imported' => $imported,
+            'failed' => $failed,
+        ], $importedCount > 0 ? 200 : 422);
     }
 
     public function addLeaveForNewUser($userId)
